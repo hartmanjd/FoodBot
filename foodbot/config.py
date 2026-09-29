@@ -20,8 +20,6 @@ class Settings:
     quiet_start: int = 21
     quiet_end: int = 9
     max_followups: int = 2
-    instacart_key: str = ""
-    instacart_env: str = "development"
     openai_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
@@ -51,10 +49,6 @@ class Settings:
         followups = int(os.getenv("MAX_FOLLOWUPS", "2"))
         if not 0 <= followups <= 2:
             raise ValueError("MAX_FOLLOWUPS must be 0, 1, or 2.")
-        env = os.getenv("INSTACART_ENV", "development")
-        if env not in ("development", "production"):
-            raise ValueError("INSTACART_ENV must be development or production.")
         return cls(token, int(owner), secret, os.getenv("DATABASE_PATH", "data/foodbot.sqlite3"),
                    timezone, day, time, start, end, followups,
-                   os.getenv("INSTACART_API_KEY", ""), env,
                    os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", "gpt-4o-mini"))

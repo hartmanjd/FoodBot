@@ -18,7 +18,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m foodbot.demo
 ```
 
-You should see a sample conversation with your five groceries, an eggs check-in delay, and a three-day snooze. This preview uses temporary data and contacts no external services. You can safely run it again.
+You should see a sample conversation with your five groceries, easy list editing, and a three-day snooze. This preview uses temporary data and contacts no external services. You can safely run it again.
 
 The `.venv` folder is a private copy of Python's packages for this project. We call its Python directly so you don't need to change PowerShell's script execution settings.
 
@@ -91,7 +91,7 @@ QUIET_END=9
 MAX_FOLLOWUPS=2
 ```
 
-Leave `INSTACART_API_KEY` and `OPENAI_API_KEY` empty for now. Save, close Notepad, and check the connection:
+Leave `OPENAI_API_KEY` empty for now. Save, close Notepad, and check the connection:
 
 ```powershell
 .\.venv\Scripts\python.exe -m foodbot.manage check
@@ -159,56 +159,33 @@ The second command should show your domain ending in `/telegram/webhook`, with n
 
 **Checkpoint:** open your Telegram bot and send `/start`. It should answer in a few seconds.
 
-## 7. Load your groceries and test the habit loop
+## 7. Try the simple habit loop
 
-1. Tap **Load my usual groceries**. Your starter list is:
+Your first page has just three actions:
 
-| Grocery | Starting quantity | Estimate between purchases | Essential? |
-| --- | --- | --- | --- |
-| Eggs | 12 each | 10 days | Yes |
-| Hash browns | 1 package | 14 days | Yes |
-| Greek yogurt | 1 package | 7 days | Yes |
-| Bread | 1 package | 7 days | Yes |
-| English muffins | 1 package | 10 days | No |
+| Action | What happens |
+| --- | --- |
+| **Review groceries** | Shows your saved list, with **Add item** and **Remove item** buttons. |
+| **Shop** | Makes a copyable shopping list to use in your store app or at the store. |
+| **Snooze** | Asks how many days to wait until your next check-in. |
 
-These amounts, intervals, and essential flags are placeholders to edit, not learned facts. For example, send `/staple Greek yogurt | 7 | each | 7 | yes` if you normally buy seven individual cups. Including the package size or brand in the item name helps identify the right product.
+1. Send `/start`. New users start with eggs, hash browns, Greek yogurt, bread, and English muffins. Existing users keep their current list.
+2. Tap **Review groceries → Add item**, then type `coffee`. You can add several items with `coffee, apples` or one per line. If you want a specific amount, type `eggs | 12 | each`.
+3. Tap **Remove item**, then tap an item's name to remove it. It stays removed until you add it again.
+4. Tap **Back** for the three main actions.
+5. Tap **Snooze**, then reply `3`. The bot confirms a check-in three days ahead at 10 a.m. Pacific. You can enter any whole number from 1 to 90. **Cancel** leaves the timing unchanged. The question and any saved snooze survive restarts.
+6. Send `/status` to check the date. After testing, `/resume` schedules the next 10 a.m. check-in and returns to the normal Monday schedule after that.
+7. Tap **Shop** to get a copyable list. It doesn't contact Instacart or place an order.
+8. When you finish shopping, send `/done` to stop this week's follow-ups. Your list stays saved for the next trip. This is a habit check-off, with no inventory tracking.
+9. Enable Telegram notifications for this chat and pin it if helpful.
 
-2. Send `/checkin` for an immediate sample. It doesn't change your weekly Monday setting.
-3. Send `/stocked eggs | 5`. Eggs should leave the current list and become eligible for another suggestion in five days.
-4. Send `snooze for 3 days`, then `/status`. It should show a date three days ahead at 10 a.m. Pacific. Restarting the service should keep that date.
-5. Send `/resume` when done testing. This schedules the next check-in at the next 10 a.m. slot, then the normal weekly schedule continues. It does not erase item-specific delays.
-6. Send `/shop`. Without an Instacart key it gives you a list to copy into the store app.
-7. After a **real** purchase, adjust quantities/removals to match what you actually bought, then use `/ordered` and confirm the displayed items. Don't confirm a pretend purchase just to test: that would change the replenishment estimates.
-8. Enable Telegram notifications for this chat and pin it if helpful.
+The starter amounts are 12 eggs and one package each of the other items. Adjust these through Add item whenever needed. Repeat intervals, still-stocked controls, essentials mode, and automatic replenishment have been removed.
 
-You now have the core grocery habit assistant. OpenAI and Instacart access are optional additions below.
+To try an immediate reminder, send `/checkin`. Reminders invite you to review, shop, or snooze; they don't guess what's running out.
 
-## 8. Optional: connect Instacart
+## 8. Optional: understand casual replies with OpenAI
 
-The integration creates a shoppable list. You still select products, review quantities, and complete checkout in Instacart. Opening a link never records a purchase in Foodbot. [Instacart documents this shopping-list flow here](https://docs.instacart.com/developer_platform_api/api/products/create_shopping_list_page).
-
-1. Follow [Instacart's developer onboarding](https://docs.instacart.com/developer_platform_api/get_started/overview/) and request access. Production access requires their review; availability for this personal project is not guaranteed. See [the approval process](https://docs.instacart.com/developer_platform_api/guide/concepts/launch_activities/approval_process/).
-2. Once you have a development API key, set these in your **local `.env`**:
-
-```dotenv
-INSTACART_API_KEY=your_development_key
-INSTACART_ENV=development
-```
-
-3. Run one real API test before connecting it to the bot:
-
-```powershell
-.\.venv\Scripts\python.exe -m foodbot.manage instacart-test
-```
-
-4. Open the resulting development link to verify matching. This command creates a list link; it does not purchase anything.
-5. When Instacart approves production use, put the production key in **Railway Variables** and set `INSTACART_ENV=production`. Redeploy, then send `/shop` in Telegram.
-
-If access is unavailable, leave the key empty. Your reminders and saved list keep working with manual shopping. Development links are explicitly labeled as test links.
-
-## 9. Optional: understand casual replies with OpenAI
-
-Basic buttons, reminders, purchases, and commands already work without AI. This addition lets you say things like “Skip bread and add two packages of coffee.” The bot shows proposed edits with **Apply** and **Cancel** buttons.
+Buttons, list editing, snooze questions, and reminders already work without AI. This addition lets you say things like “Remove bread and add two packages of coffee.” The bot shows proposed edits with **Apply** and **Cancel** buttons.
 
 1. Create an API project/key in the [OpenAI API platform](https://platform.openai.com/). Set up any required API billing and review usage controls there.
 2. Add these Railway variables:
@@ -218,18 +195,18 @@ OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-3. Redeploy. Send “Skip bread and add two packages of coffee.” Review the proposal and tap **Apply**.
+3. Redeploy. Send “Remove bread and add two packages of coffee.” Review the proposal and tap **Apply**.
 
 The integration uses the [Responses API's structured output format](https://developers.openai.com/api/docs/guides/structured-outputs). If that model isn't available to your API project, select a model available to you that supports Responses structured outputs and change `OPENAI_MODEL`. An AI failure falls back to ordinary commands.
 
-With this enabled, your casual message, current list, and staple information are sent to OpenAI for interpretation. The request uses `store=false`. Telegram holds your chat, and Railway's database holds your grocery records and processed messages. See the providers' current data policies for their retention practices.
+With this enabled, your casual message and current list are sent to OpenAI for interpretation. The request uses `store=false`. Telegram holds your chat, and Railway's database holds your grocery records and processed messages. See the providers' current data policies for their retention practices.
 
-## 10. Keep it working
+## 9. Keep it working
 
 - Enable backups for your Railway volume; keep at least a recent known-good backup. See [operations](OPERATIONS.md) before restoring.
 - Use `/status` to inspect reminders. `/pause` stops nudges indefinitely. `/resume` restarts them; `/snooze N` schedules a return and also resumes a paused bot.
 - Schedule changes go in Railway Variables. Redeploy after changing them. The next weekly slot is recalculated; an already saved snooze keeps its promised time.
-- Change a staple with `/staple name | quantity | unit | interval_days | yes_or_no`. New intervals apply after the next confirmed purchase; use `/stocked` to change the current due date.
+- Edit your saved list through **Review groceries**. Add item can also update an existing quantity. The list is reused until you change it.
 - After editing code, commit and push it through GitHub Desktop. Railway deploys the new version. Keep the volume attached.
 
 ## If something gets stuck
@@ -242,9 +219,8 @@ With this enabled, your casual message, current list, and staple information are
 | `identify` says a webhook exists | Your bot is already connected. The helper will not disconnect it. Use the owner ID saved in your settings. |
 | No scheduled nudges | Send `/status`; check pause/snooze, quiet hours, notification permissions, and that Railway is running with Serverless off. Two ignored follow-ups intentionally produce a quiet break until next week. |
 | List disappeared after deployment | Confirm `/data/foodbot.sqlite3` and the `/data` volume. An ephemeral database cannot survive replacement; restore a backup if needed. |
-| Instacart link fails | Check development versus production key/environment. Try `instacart-test`. Your saved list remains available. |
 | Casual messages fail | Commands still work. Check OpenAI key, billing, model availability, and provider status. |
-| A button says it is old | The list changed since the button appeared. Send `/list`, `/ordered`, or tap Still stocked again for a fresh button. |
+| A button says it is old | The list changed since the button appeared. Open **Review groceries → Remove item** again for current buttons. |
 
 For code checks, run:
 
@@ -253,3 +229,7 @@ For code checks, run:
 ```
 
 The tests use fake services and temporary databases, so they don't contact your bot or buy groceries.
+
+## Updating from the original version
+
+After the new commit deploys, send `/start` to see the simplified menu. Old Telegram messages still show their original buttons; inventory buttons on those messages now take you to the current menu without changing groceries. Existing lists, weekly timing, paused state, and saved snoozes are kept. Historical purchase records remain in the database, but the bot no longer uses them or previous staple intervals to suggest items.

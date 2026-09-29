@@ -2,26 +2,25 @@
 
 ## Storage and delivery
 
-Run one service replica with one Uvicorn worker. The one background loop processes inbox events before scheduling or delivering outgoing messages. SQLite transactions save state, purchase records, outgoing replies, and each processed update together. A repeated Telegram update ID cannot apply an edit twice.
+Run one service replica with one Uvicorn worker. The one background loop processes inbox events before scheduling or delivering outgoing messages. SQLite transactions save state, outgoing replies, and each processed update together. A repeated Telegram update ID cannot apply an edit twice.
 
-The outbox retries failed deliveries with a delay. Telegram does not provide an idempotency key for sending a message: if a send succeeds but the process crashes before saving that success, a message can be delivered twice after restart. Grocery changes and purchases remain deduplicated. Old reminder generations are discarded after list changes, snoozes, pauses, or completed orders.
+The outbox retries failed deliveries with a delay. Telegram does not provide an idempotency key for sending a message: if a send succeeds but the process crashes before saving that success, a message can be delivered twice after restart. Grocery edits remain deduplicated. Old reminder generations are discarded after list changes, snoozes, pauses, or completed shopping check-ins.
 
 The health endpoint verifies database connectivity and that the worker is making progress. It does not prove Telegram or other providers are reachable. Delivery failures are logged by exception type without request URLs, since Telegram URLs contain the bot token.
 
-## Reminder behavior
+## Habit and reminder behavior
 
-- The owner must send `/start` before automatic reminders begin.
-- Weekly check-in: Monday at 10 a.m. Pacific, configurable through environment variables.
-- A due staple can begin a new cycle between weekly check-ins after a completed purchase or when all items were marked stocked.
-- During an active cycle, each nudge refreshes due suggestions. There aren't separate notifications for every item.
-- Up to two daily follow-ups, followed by a quiet break until the next weekly check-in. Reviewing or editing the list doesn't mean shopping is finished; it remains eligible for these bounded follow-ups.
-- At least 20 hours between automatic nudges, except an explicit snooze return, with no automatic messages during quiet hours. Explicit command replies can arrive whenever you ask.
-- Snooze suppresses every automatic reminder until the chosen local date/time, including weekly ones. A long snooze results in one return check-in rather than a backlog.
-- “Still stocked” delays the named staple and removes it from the list. If other groceries remain, their cycle can continue. A weekly check-in can still ask whether anything else is needed.
-- Skip removes an item for the current cycle. The next weekly cycle or a completed purchase clears skips. Forget removes it from staples permanently but leaves any current-list copy for explicit review.
-- “Just essentials” keeps only list items whose staples are marked essential. Other items stay skipped for this cycle.
-- `/ordered` shows a confirmation for the exact list revision. Confirmed quantities are recorded as bought today. A stale confirmation cannot record a changed list.
-- A missed check-in after downtime is delivered at the next eligible worker check outside quiet hours. It does not replay every missed day.
+- `/start` starts check-ins and shows only Review groceries, Shop, and Snooze. New users get the five starter groceries once; existing lists are preserved.
+- Review groceries offers Add item and Remove item. Add accepts names, comma/newline-separated names, or `name | quantity | unit`. Removal buttons carry the list revision so an old button cannot remove a different item.
+- The list is reused until edited. Removed items never return automatically.
+- Shop formats the list for copying. It does not contact a shopping provider, mark anything bought, or stop follow-ups.
+- Snooze asks for 1–90 whole days. The pending question is persisted. Invalid replies ask again; Cancel leaves the previous schedule unchanged. Another explicit command exits the prompt.
+- Weekly check-in: Monday at 10 a.m. Pacific, configurable through environment variables. There are no inventory-based triggers between weekly check-ins.
+- Up to two daily follow-ups, then a quiet break until the next weekly check-in. Reviewing or editing the list doesn't mean shopping is finished.
+- At least 20 hours between automatic nudges, except an explicit snooze return. No automatic messages during quiet hours. Explicit replies can arrive whenever requested.
+- Snooze suppresses every automatic reminder until the selected local date/time. A long snooze produces one return check-in, not a backlog.
+- `/done` ends follow-ups until next week and keeps the saved list. `/pause` stops check-ins indefinitely; `/resume` restarts them at the next daily slot.
+- A missed check-in after downtime arrives at the next eligible worker check outside quiet hours.
 
 Dates are saved in UTC and calculated using the configured IANA timezone. The default 10 a.m. schedule avoids ambiguous daylight saving transition hours. Tests cover spring and fall changes.
 
@@ -41,12 +40,14 @@ To restore manually, stop the application, preserve the current database and its
 
 ## Data and secrets
 
-The database contains shopping lists, staple preferences, purchase records, Telegram input events, and outgoing messages. There is no automatic data retention cleanup yet. It is a local SQLite file without application-level encryption. Restrict access to your hosting project and backups. `.env`, databases, and backups are excluded from source control and Docker build context.
+The database contains shopping lists, legacy staple preferences, historical purchase records, Telegram input events, and outgoing messages. There is no automatic data retention cleanup yet. It is a local SQLite file without application-level encryption. Restrict access to your hosting project and backups. `.env`, databases, and backups are excluded from source control and Docker build context.
 
 Only the configured owner in a private Telegram chat can submit actions. Unknown users and groups are ignored. The webhook secret is checked before parsing the body. There is no public endpoint to read groceries. Receipt attachments are not downloaded or interpreted in this version.
 
-## What is intentionally deferred
+## Compatibility and deferred features
 
-Receipt OCR/PDF parsing, receipt deduplication, substitutions/refunds, email ingestion, automatic purchase-history import, adaptive interval learning, quantity-based consumption estimates, voice notes, multiple users, and automatic checkout are not implemented. Purchase history is stored for future learning, but current timing uses explicit staple intervals and your still-stocked feedback.
+Schema 2 preserves the existing list, pause state, weekly schedule, snooze, and historical purchases. Retired inventory fields are retained under `legacy_inventory` for recovery, not used to suggest groceries. Old queued UI messages are discarded during migration, and old inventory callbacks safely return the new menu. `/skip` remains an alias for remove; `/ordered` remains an alias for `/done`. Old purchase confirmation buttons cannot record a purchase.
 
-The live Telegram, OpenAI, Instacart, and Railway integrations require your accounts and keys. Automated tests exercise their boundaries with mocked HTTP responses; account permissions and real provider behavior must be checked during setup.
+Instacart shopping links, inventory tracking, essentials mode, purchase capture, receipt scanning, adaptive learning, email ingestion, voice notes, and automatic checkout are outside the current habit-focused version. Old Instacart environment variables can be removed; they are no longer used.
+
+Live Telegram, optional OpenAI, and Railway access require your accounts. Tests use fake services and temporary databases.

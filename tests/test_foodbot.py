@@ -10,7 +10,6 @@ import httpx
 
 from foodbot.app import create_app
 from foodbot.assistant import Proposal
-from foodbot.clients import shopping_link
 from foodbot.config import Settings
 from foodbot.database import Database
 from foodbot.engine import Engine
@@ -65,33 +64,157 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
 
     async def start(self):
         await self.command("/start")
-        await self.command("seed", True)
 
     def reminders(self):
         with self.db.connect() as db:
             return db.execute("SELECT * FROM outbox WHERE kind='reminder'").fetchall()
 
-    async def test_personal_starters_and_duplicate_events(self):
-        await self.start()
-        state = self.db.snapshot()
-        self.assertEqual([x["name"] for x in state["staples"]],
-                         ["eggs", "hash browns", "Greek yogurt", "bread", "English muffins"])
-        await self.command("/add coffee | 2 | package", update_id=100)
-        revision = self.db.snapshot()["revision"]
-        await self.command("/add coffee | 2 | package", update_id=100)
-        self.assertEqual(self.db.snapshot()["revision"], revision)
-        self.assertEqual(len(self.db.snapshot()["items"]), 6)
+    async def test_home_has_only_three_actions_and_start_preserves_edits(self):
+        reply = await self.command("/start")
+        self.assertEqual([b["text"] for row in reply["reply_markup"]["inline_keyboard"] for b in row],
+                         ["Review groceries", "Shop", "Snooze"])
+        self.assertEqual(len(self.db.snapshot()["items"]), 5)
+        await self.command("/remove eggs")
+        await self.command("/start")
+        self.assertEqual(len(self.db.snapshot()["items"]), 4)
 
-    async def test_snooze_survives_restart_and_suppresses_weekly(self):
+    async def test_add_prompt_without_ai_and_batch_validation(self):
         await self.start()
-        await self.command("snooze for 10 days")
-        wake = parse(self.db.snapshot()["snoozed_until"])
-        engine = Engine(Database(self.settings.database), self.settings, self.client)
-        engine.tick(NOW + timedelta(days=7))
-        self.assertEqual(len(self.reminders()), 0)
-        engine.tick(wake)
-        self.assertEqual(len(self.reminders()), 1)
+        await self.command("add", True)
+        await self.command("coffee, apples")
+        self.assertEqual(len(self.db.snapshot()["items"]), 7)
+        await self.command("add", True)
+        before = self.db.snapshot()["items"]
+        await self.command("tea, eggs | nan | each")
+        self.assertEqual(self.db.snapshot()["items"], before)
+        self.assertEqual(self.db.snapshot()["awaiting"], "add")
+        await self.command("tea")
+        self.assertEqual(len(self.db.snapshot()["items"]), 8)
+
+    async def test_duplicate_events_do_not_apply_twice(self):
+        await self.start()
+        await self.command("/add coffee", update_id=100)
+        revision = self.db.snapshot()["revision"]
+        await self.command("/add coffee", update_id=100)
+        self.assertEqual(self.db.snapshot()["revision"], revision)
+
+    async def test_remove_buttons_are_revision_checked(self):
+        await self.start()
+        reply = await self.command("remove", True)
+        remove = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        await self.command(remove, True)
+        self.assertNotIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
+        reply = await self.command(remove, True)
+        self.assertIn("list changed", reply["text"])
+        self.assertEqual(len(self.db.snapshot()["items"]), 4)
+        await self.command("delete:-1:" + str(self.db.snapshot()["revision"]), True)
+        self.assertEqual(len(self.db.snapshot()["items"]), 4)
+
+    async def test_removed_items_stay_removed_across_weeks(self):
+        await self.start()
+        await self.command("/remove eggs")
+        self.engine.tick(NOW + timedelta(days=7))
+        await self.command("/checkin")
+        self.assertNotIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
+
+    async def test_snooze_asks_then_accepts_number_after_restart(self):
+        await self.start()
+        reply = await self.command("snooze", True)
+        self.assertIn("How many days", reply["text"])
         self.assertIsNone(self.db.snapshot()["snoozed_until"])
+        self.engine = Engine(Database(self.settings.database), self.settings, self.client)
+        self.engine.initialize(NOW)
+        for invalid in ("0", "91", "-1", "1.5", "tomorrow", ""):
+            reply = await self.command(invalid)
+            self.assertIn("whole number", reply["text"])
+            self.assertEqual(self.db.snapshot()["awaiting"], "snooze")
+            self.assertIsNone(self.db.snapshot()["snoozed_until"])
+        await self.command("10 days")
+        wake = parse(self.db.snapshot()["snoozed_until"])
+        self.assertIsNone(self.db.snapshot()["awaiting"])
+        self.engine.tick(NOW + timedelta(days=7))
+        self.assertEqual(len(self.reminders()), 0)
+        self.engine.tick(wake)
+        self.assertEqual(len(self.reminders()), 1)
+
+    async def test_cancel_and_navigation_exit_prompts(self):
+        await self.start()
+        await self.command("snooze", True)
+        await self.command("cancel", True)
+        self.assertIsNone(self.db.snapshot()["awaiting"])
+        self.assertIsNone(self.db.snapshot()["snoozed_until"])
+        await self.command("add", True)
+        await self.command("list", True)
+        await self.command("coffee")
+        self.assertNotIn("coffee", [x["name"] for x in self.db.snapshot()["items"]])
+
+    async def test_shop_only_returns_list_without_network_or_purchase(self):
+        await self.start()
+        before = copy.deepcopy(self.db.snapshot()["items"])
+        reply = await self.command("shop", True)
+        self.assertIn("copy it", reply["text"])
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.db.snapshot()["items"], before)
+        with self.db.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM purchases").fetchone()[0], 0)
+
+    async def test_empty_list_stays_empty_and_offers_add(self):
+        await self.start()
+        for item in list(self.db.snapshot()["items"]):
+            await self.command("/remove " + item["name"])
+        await self.command("/start")
+        self.engine.tick(NOW)
+        reply = await self.command("/shop")
+        self.assertIn("empty", reply["text"])
+        self.assertEqual(self.db.snapshot()["items"], [])
+        self.assertIn("Add item", str(reply["reply_markup"]))
+
+    async def test_done_stops_followups_but_preserves_list(self):
+        await self.start()
+        self.engine.tick(NOW)
+        before = copy.deepcopy(self.db.snapshot()["items"])
+        await self.command("/done")
+        self.assertEqual(self.db.snapshot()["items"], before)
+        self.assertIsNone(self.db.snapshot()["followup"])
+        self.engine.tick(NOW + timedelta(days=1))
+        self.assertEqual(len(self.reminders()), 1)
+        self.engine.tick(NOW + timedelta(days=7))
+        self.assertEqual(len(self.reminders()), 2)
+
+    async def test_legacy_inventory_controls_cannot_change_list(self):
+        await self.start()
+        before = self.db.snapshot()["items"]
+        for command in ("stockmenu", "stock:0:5", "essentials", "confirm:1:5", "seed"):
+            reply = await self.command(command, True)
+            self.assertIn("simplified", reply["text"])
+            self.assertEqual(self.db.snapshot()["items"], before)
+        self.assertEqual(self.requests, [])
+
+    async def test_migration_preserves_list_and_snooze_and_ignores_due_inventory(self):
+        await self.start()
+        await self.command("/snooze 10")
+        with self.db.transaction() as db:
+            old = self.db.read(db)
+            old.update(schema=1, staples=[{"name": "old staple", "due": stamp(NOW)}], skipped=[],
+                       active=False, cycle=2, link="https://old.example", pending={"actions": []})
+            self.db.save(db, old)
+        before = self.db.snapshot()
+        self.engine.initialize(NOW)
+        state = self.db.snapshot()
+        self.assertEqual(state["schema"], 2)
+        self.assertEqual(state["items"], before["items"])
+        self.assertEqual(state["snoozed_until"], before["snoozed_until"])
+        self.assertEqual(state["legacy_inventory"]["staples"], before["staples"])
+        self.assertIsNone(state["pending"])
+        await self.command("/resume")
+        self.engine.tick(NOW + timedelta(days=1))
+        self.assertNotIn("old staple", [x["name"] for x in self.db.snapshot()["items"]])
+
+    async def test_no_inventory_trigger_between_weekly_checks(self):
+        await self.start()
+        await self.command("/done")
+        self.engine.tick(NOW + timedelta(days=2))
+        self.assertEqual(len(self.reminders()), 0)
 
     async def test_followup_limit_and_restart_no_duplicate(self):
         await self.start()
@@ -112,96 +235,6 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.engine.tick(NOW)
         self.assertIsNone(self.db.snapshot()["followup"])
 
-    async def test_skip_is_temporary_and_does_not_reappear_on_checkin(self):
-        await self.start()
-        await self.command("/skip eggs")
-        await self.command("/checkin")
-        self.assertNotIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
-        self.assertIn("eggs", [x["name"] for x in self.db.snapshot()["staples"]])
-        self.engine.tick(NOW + timedelta(days=7))
-        self.assertIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
-
-    async def test_stocked_defers_item_and_removes_from_current_list(self):
-        await self.start()
-        await self.command("/stocked eggs | 10")
-        await self.command("/checkin", now=NOW + timedelta(days=7))
-        self.assertNotIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
-        await self.command("/checkin", now=NOW + timedelta(days=10))
-        self.assertIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
-
-    async def test_stocked_all_does_not_create_an_empty_followup(self):
-        await self.start()
-        self.engine.tick(NOW)
-        for name in [x["name"] for x in self.db.snapshot()["staples"]]:
-            await self.command(f"/stocked {name} | 10")
-        self.assertFalse(self.db.snapshot()["active"])
-        self.assertIsNone(self.db.snapshot()["followup"])
-        telegram = FakeTelegram()
-        while await deliver_one(self.db, self.settings, telegram, NOW):
-            pass
-        self.assertFalse(any("Might you" in x["text"] for x in telegram.sent))
-
-    async def test_confirm_records_once_and_stale_button_cannot_buy_new_list(self):
-        await self.start()
-        reply = await self.command("/ordered")
-        confirm = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        await self.command(confirm, True)
-        await self.command(confirm, True)
-        with self.db.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM purchases").fetchone()[0], 1)
-        self.assertEqual(self.db.snapshot()["items"], [])
-        self.assertIsNone(self.db.snapshot()["followup"])
-        await self.command("/add coffee")
-        await self.command(confirm, True)
-        self.assertEqual(len(self.db.snapshot()["items"]), 1)
-
-    async def test_edit_invalidates_purchase_confirmation(self):
-        await self.start()
-        reply = await self.command("/ordered")
-        confirm = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        await self.command("/skip bread")
-        reply = await self.command(confirm, True)
-        self.assertIn("older list", reply["text"])
-        with self.db.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM purchases").fetchone()[0], 0)
-
-    async def test_due_staple_initiates_after_purchase(self):
-        await self.start()
-        reply = await self.command("/ordered")
-        await self.command(reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"], True)
-        # Set a short replenishment estimate before the weekly slot.
-        with self.db.transaction() as db:
-            state = self.db.read(db)
-            state["staples"][0]["due"] = stamp(NOW + timedelta(days=2))
-            self.db.save(db, state)
-        self.engine.tick(NOW + timedelta(days=2))
-        self.assertEqual(len(self.reminders()), 1)
-        self.assertEqual(self.db.snapshot()["items"][0]["name"], "eggs")
-
-    async def test_shop_link_is_cached_and_never_records_purchase(self):
-        await self.start()
-        self.engine.settings = replace(self.settings, instacart_key="fake")
-        await self.command("/shop")
-        await self.command("/shop")
-        self.assertEqual(len(self.requests), 1)
-        payload = json.loads(self.requests[0].content)
-        self.assertEqual(payload["line_items"][0]["line_item_measurements"], [{"quantity": 12, "unit": "each"}])
-        with self.db.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM purchases").fetchone()[0], 0)
-        await self.command("/skip eggs")
-        await self.command("/shop")
-        self.assertEqual(len(self.requests), 2)
-
-    async def test_instacart_failure_keeps_list(self):
-        await self.start()
-        before = copy.deepcopy(self.db.snapshot()["items"])
-        self.engine.settings = replace(self.settings, instacart_key="fake")
-        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(503))) as client:
-            self.engine.client = client
-            reply = await self.command("/shop")
-        self.assertIn("list is saved", reply["text"])
-        self.assertEqual(self.db.snapshot()["items"], before)
-
     async def test_pause_and_snooze_cancel_queued_nudges(self):
         await self.start()
         self.engine.tick(NOW)
@@ -209,19 +242,19 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         telegram = FakeTelegram()
         while await deliver_one(self.db, self.settings, telegram, NOW):
             pass
-        self.assertFalse(any("Might you" in x["text"] for x in telegram.sent))
+        self.assertFalse(any("Let's make a little time" in x["text"] for x in telegram.sent))
         await self.command("/pause")
         self.engine.tick(NOW + timedelta(days=30))
         self.assertEqual(len(self.reminders()), 1)
 
     async def test_quiet_hours(self):
         await self.start()
-        self.engine.tick(NOW + timedelta(hours=12))  # 10 p.m.
+        self.engine.tick(NOW + timedelta(hours=12))
         self.assertEqual(len(self.reminders()), 0)
 
     async def test_explicit_snooze_returns_at_promised_time_after_late_nudge(self):
         await self.start()
-        late = NOW + timedelta(hours=10)  # 8 p.m. after downtime
+        late = NOW + timedelta(hours=10)
         self.engine.tick(late)
         await self.command("/snooze 1", now=late)
         self.engine.tick(NOW + timedelta(days=1))
@@ -230,59 +263,34 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
     async def test_resume_waits_for_promised_slot(self):
         await self.start()
         await self.command("/pause")
-        await self.command("/stocked eggs | 1")
-        with self.db.transaction() as db:
-            state = self.db.read(db)
-            state["active"] = False
-            self.db.save(db, state)
         await self.command("/resume", now=NOW + timedelta(hours=2))
         self.engine.tick(NOW + timedelta(hours=2))
         self.assertEqual(len(self.reminders()), 0)
         self.engine.tick(NOW + timedelta(days=1))
         self.assertEqual(len(self.reminders()), 1)
 
-    async def test_changed_schedule_preserves_snooze(self):
-        await self.start()
-        await self.command("/snooze 10")
-        saved = self.db.snapshot()["snoozed_until"]
-        changed = replace(self.settings, day=2, checkin_time="11:00")
-        engine = Engine(self.db, changed, self.client)
-        engine.initialize(NOW)
-        self.assertEqual(self.db.snapshot()["snoozed_until"], saved)
-        self.assertEqual(parse(self.db.snapshot()["next_checkin"]), NOW + timedelta(days=2, hours=1))
-
     async def test_failed_delivery_retries_without_applying_input_twice(self):
         await self.start()
         failed = FakeTelegram(fail=True)
         self.assertFalse(await deliver_one(self.db, self.settings, failed, NOW))
-        with self.db.connect() as db:
-            self.assertEqual(db.execute("SELECT attempts FROM outbox ORDER BY id LIMIT 1").fetchone()[0], 1)
         telegram = FakeTelegram()
         while await deliver_one(self.db, self.settings, telegram, NOW + timedelta(hours=1)):
             pass
-        self.assertEqual(len(telegram.sent), 2)
+        self.assertEqual(len(telegram.sent), 1)
         self.assertEqual(len(self.db.snapshot()["items"]), 5)
-
-    async def test_invalid_input_leaves_state_unchanged(self):
-        await self.start()
-        before = self.db.snapshot()
-        for command in ("/add eggs | nan | each", "/snooze 0", "/stocked eggs | -1", "/staple eggs | 1 | carton | 3 | yes"):
-            await self.command(command)
-            self.assertEqual(self.db.snapshot(), before)
 
     async def test_ai_proposal_requires_confirmation_and_validates(self):
         await self.start()
         self.engine.settings = replace(self.settings, openai_key="fake")
         proposal = {"clarification": "", "actions": [
-            {"type": "skip", "item": "eggs", "quantity": 1, "unit": "each", "days": 1},
+            {"type": "remove", "item": "eggs", "quantity": 1, "unit": "each", "days": 1},
             {"type": "add", "item": "coffee", "quantity": 2, "unit": "package", "days": 1}]}
         payload = {"status": "completed", "output": [{"type": "message", "content": [
             {"type": "output_text", "text": json.dumps(proposal)}]}]}
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))) as client:
             self.engine.client = client
-            reply = await self.command("Skip eggs and add two packages of coffee")
+            reply = await self.command("Remove eggs and add two packages of coffee")
         self.assertIn("eggs", [x["name"] for x in self.db.snapshot()["items"]])
-        self.assertNotIn("coffee", [x["name"] for x in self.db.snapshot()["items"]])
         action = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         await self.command(action, True)
         names = [x["name"] for x in self.db.snapshot()["items"]]

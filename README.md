@@ -4,19 +4,17 @@ A personal Telegram grocery companion that starts the conversation for you.
 
 **Start here: [beginner setup guide](docs/SETUP.md).** It walks through Windows setup, Telegram, Railway, and a first-use checklist. You can stop after any numbered section and come back later.
 
-Your defaults are **Monday at 10 a.m., America/Los_Angeles**, with eggs, hash browns, Greek yogurt, bread, and English muffins. Load them with one button after `/start`. Quantities, essential flags, and repeat intervals are editable starting assumptions.
+Your defaults are **Monday at 10 a.m., America/Los_Angeles**, with eggs, hash browns, Greek yogurt, bread, and English muffins. New users get these groceries automatically on `/start`. Existing saved lists are preserved. Quantities are editable starting assumptions.
 
-## What is ready
+## Three simple actions
 
-- Weekly check-ins, plus replenishment estimates after confirmed purchases.
-- A saved grocery list with quick review, essentials, still-stocked, and shopping buttons.
-- “Snooze for 3 days” or `/snooze 14`; all automatic nudges wait until the selected date.
-- Up to two daily follow-ups, then a break until the next weekly check-in. Quiet hours are 9 p.m.–9 a.m.
-- Item-specific delays: `/stocked eggs | 5` removes eggs from this list and delays their next suggestion.
-- Optional Instacart shopping links, with a copyable list available without an API key.
-- Optional OpenAI conversational edits, shown for confirmation before they change your groceries.
-- Purchase confirmation that stops the current reminder cycle and updates staple estimates.
-- Private-chat owner restriction, webhook authentication, SQLite persistence, input deduplication, and durable outgoing messages.
+- **Review groceries** — see the saved list, tap **Add item** and type names, or tap **Remove item** and choose what to remove.
+- **Shop** — get a copyable list for your store app or trip to the store.
+- **Snooze** — the bot asks how many days until your next check-in. Reply with a number from 1 to 90.
+
+The focus is building the grocery habit. Lists stay saved between trips. There are no inventory estimates, still-stocked controls, essentials mode, or Instacart calls. Monday check-ins, two bounded follow-ups, quiet hours, and durable snoozes keep the habit moving. `/done` ends the week's follow-ups while keeping the list.
+
+Optional OpenAI conversational edits still ask for confirmation. Every button flow works without an AI key. Private-chat owner restriction, webhook authentication, SQLite persistence, input deduplication, and durable outgoing messages remain in place.
 
 ## Try the conversation without accounts
 
@@ -32,9 +30,7 @@ This prints a sample conversation using a temporary database. It sends nothing a
 
 Telegram → authenticated FastAPI webhook → SQLite inbox → single background worker → grocery state and outgoing replies → Telegram.
 
-Reminder timing is ordinary Python code. OpenAI is optional and only proposes list edits; it doesn't control reminders or mark purchases. Instacart creates a shopping link, and you complete checkout there. No receipt extraction, automatic checkout, email access, or adaptive learning is included in this milestone.
-
-The database stores configured repeat intervals and confirmed purchase dates. It estimates when you may need something; it cannot see what's left in your kitchen. Buying extra does not automatically change the interval yet—use `/stocked` to delay the next suggestion.
+Reminder timing is ordinary Python code. OpenAI is optional and proposes only additions, removals, or snoozes. Shop formats your saved list without external calls or purchase tracking. Existing inventory data and purchase history are preserved during the upgrade but are no longer used.
 
 ## Development
 
@@ -64,7 +60,7 @@ The local server alone does not connect Telegram. The hosted setup guide registe
 | `foodbot/schedule.py` | Local scheduling with UTC storage and daylight saving handling |
 | `foodbot/worker.py` | Event processing, reminder checks, delivery retries |
 | `foodbot/assistant.py` | Optional structured natural-language proposals |
-| `foodbot/clients.py` | Telegram and Instacart API clients |
+| `foodbot/clients.py` | Telegram API client |
 | `foodbot/manage.py` | Setup, connection checks, and database backup helpers |
 
 See [operations and limitations](docs/OPERATIONS.md) for backups, updates, and failure behavior.

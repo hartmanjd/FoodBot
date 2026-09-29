@@ -11,13 +11,13 @@ from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
-from .clients import Telegram, shopping_link
+from .clients import Telegram
 from .config import Settings
 
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["identify", "secret", "webhook", "webhook-info", "check", "instacart-test", "backup"])
+    parser.add_argument("command", choices=["identify", "secret", "webhook", "webhook-info", "check", "backup"])
     parser.add_argument("value", nargs="?", help="HTTPS domain for webhook; destination path for backup")
     args = parser.parse_args()
     load_dotenv()
@@ -66,7 +66,6 @@ async def main():
             print(f"Settings valid. Telegram bot: @{bot['username']}. Owner ID: {config.owner}.")
             print(f"Timezone: {config.timezone}; weekly day: {config.day} (Monday=0); time: {config.checkin_time}.")
             print("AI: " + ("configured" if config.openai_key else "optional, not configured"))
-            print("Instacart: " + (config.instacart_env if config.instacart_key else "optional, not configured"))
         elif args.command == "webhook":
             url = urlparse(args.value or "")
             if url.scheme != "https" or not url.hostname or url.path not in ("", "/") or url.query or url.fragment or url.username:
@@ -78,11 +77,6 @@ async def main():
                 "max_connections": 1,
             })
             print("Webhook connected. Send /start to your bot in Telegram.")
-        elif args.command == "instacart-test":
-            if not config.instacart_key:
-                parser.error("Set INSTACART_API_KEY first.")
-            link = await shopping_link(client, config, [{"name": "eggs", "quantity": 12, "unit": "each"}])
-            print(f"{config.instacart_env} shopping link (no purchase made): {link}")
 
 
 if __name__ == "__main__":

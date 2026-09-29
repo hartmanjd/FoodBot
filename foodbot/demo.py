@@ -19,10 +19,10 @@ async def main():
             engine = Engine(db, config, client)
             now = datetime(2026, 9, 28, 17, tzinfo=timezone.utc)
             engine.initialize(now - timedelta(minutes=1))
-            for i, command in enumerate(["/start", "seed", "/stocked eggs | 5", "snooze for 3 days", "/status", "/shop"]):
+            for i, command in enumerate(["/start", "/list", "add", "coffee, apples", "/remove bread", "snooze", "3", "/shop"]):
                 update = {"update_id": i, "message": {"text": command}}
-                if command == "seed":
-                    update = {"update_id": i, "callback_query": {"data": "seed", "message": {}}}
+                if command in ("add", "snooze"):
+                    update = {"update_id": i, "callback_query": {"data": command, "message": {}}}
                 db.enqueue(update)
                 await engine.process_one(now)
                 with db.connect() as conn:
