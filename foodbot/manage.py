@@ -66,6 +66,7 @@ async def main():
             print(f"Settings valid. Telegram bot: @{bot['username']}. Owner ID: {config.owner}.")
             print(f"Timezone: {config.timezone}; weekly day: {config.day} (Monday=0); time: {config.checkin_time}.")
             print("AI: " + ("configured" if config.openai_key else "optional, not configured"))
+            print("Shared group: " + (str(config.group) if config.group else "not set (private chat only)"))
         elif args.command == "webhook":
             url = urlparse(args.value or "")
             if url.scheme != "https" or not url.hostname or url.path not in ("", "/") or url.query or url.fragment or url.username:

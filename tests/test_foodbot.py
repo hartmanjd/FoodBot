@@ -22,12 +22,14 @@ NOW = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc)  # Monday 10 a.m. Pacifi
 class FakeTelegram:
     def __init__(self, fail=False):
         self.sent = []
+        self.chats = []
         self.fail = fail
 
-    async def send(self, owner, payload):
+    async def send(self, chat_id, payload):
         if self.fail:
             raise httpx.ConnectError("offline")
         self.sent.append(payload)
+        self.chats.append(chat_id)
 
 
 class BotTests(unittest.IsolatedAsyncioTestCase):
@@ -50,13 +52,14 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.temp.cleanup()
 
-    async def command(self, text, callback=False, now=NOW, update_id=None):
+    async def command(self, text, callback=False, now=NOW, update_id=None, sender=123, chat=123):
         self.uid += 1
-        msg = {"chat": {"id": 123, "type": "private"}, "from": {"id": 123}, "text": text}
+        msg = {"chat": {"id": chat, "type": "private" if chat > 0 else "group"},
+               "from": {"id": sender}, "text": text}
         update = {"update_id": self.uid if update_id is None else update_id, "message": msg}
         if callback:
             update = {"update_id": update["update_id"], "callback_query": {
-                "id": str(self.uid), "from": {"id": 123}, "message": msg, "data": text}}
+                "id": str(self.uid), "from": {"id": sender}, "message": msg, "data": text}}
         self.db.enqueue(update)
         await self.engine.process_one(now)
         with self.db.connect() as db:
@@ -65,14 +68,20 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
     async def start(self):
         await self.command("/start")
 
+    async def tick_and_send(self, now):
+        # Run the reminder check, then "send" whatever it queued.
+        self.engine.tick(now)
+        while await deliver_one(self.db, self.settings, FakeTelegram(), now):
+            pass
+
     def reminders(self):
         with self.db.connect() as db:
             return db.execute("SELECT * FROM outbox WHERE kind='reminder'").fetchall()
 
-    async def test_home_has_only_three_actions_and_start_preserves_edits(self):
+    async def test_home_has_only_two_actions_and_start_preserves_edits(self):
         reply = await self.command("/start")
         self.assertEqual([b["text"] for row in reply["reply_markup"]["inline_keyboard"] for b in row],
-                         ["Review groceries", "Shop", "Snooze"])
+                         ["Groceries", "Shop"])
         self.assertEqual(len(self.db.snapshot()["items"]), 5)
         await self.command("/remove eggs")
         await self.command("/start")
@@ -87,7 +96,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         before = self.db.snapshot()["items"]
         await self.command("tea, 0 eggs")
         self.assertEqual(self.db.snapshot()["items"], before)
-        self.assertEqual(self.db.snapshot()["awaiting"], "add")
+        self.assertEqual(self.db.snapshot()["awaiting"].get("123"), "add")
         await self.command("tea")
         self.assertEqual(len(self.db.snapshot()["items"]), 8)
 
@@ -120,6 +129,58 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(reply["text"].startswith("Hash browns have been removed."))
         reply = await self.command("home", True)
         self.assertNotIn("One small step", reply["text"])
+
+    async def test_remove_several_items_at_once(self):
+        await self.start()
+        reply = await self.command("/remove eggs, bread")
+        self.assertTrue(reply["text"].startswith("Eggs and bread have been removed."))
+        # One missing item means nothing is removed, and the reply names it.
+        before = self.db.snapshot()["items"]
+        reply = await self.command("/remove hash browns, pickles")
+        self.assertIn("pickles", reply["text"])
+        self.assertEqual(self.db.snapshot()["items"], before)
+        # Remove buttons stay open, and typing names works too.
+        reply = await self.command("remove", True)
+        tap = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        reply = await self.command(tap, True)
+        self.assertIn("Tap another item", reply["text"])
+        self.assertIn("Done removing", str(reply["reply_markup"]))
+        await self.command("greek yogurt, English muffins")
+        self.assertEqual(self.db.snapshot()["items"], [])
+
+    async def test_new_list_replaces_old_list(self):
+        await self.start()
+        reply = await self.command("newlist", True)
+        self.assertIn("replaces", reply["text"])
+        reply = await self.command("milk, 3 lemons")
+        self.assertIn("• milk\n• 3 lemons", reply["text"])
+        self.assertEqual([x["name"] for x in self.db.snapshot()["items"]], ["milk", "lemons"])
+        # Cancel leaves the list alone.
+        await self.command("newlist", True)
+        await self.command("cancel", True)
+        self.assertEqual(len(self.db.snapshot()["items"]), 2)
+
+    async def test_group_chat_replies_and_separate_questions(self):
+        await self.start()
+        group, partner = -100555, 456
+        reply = await self.command("add", True, sender=123, chat=group)
+        self.assertEqual(reply["chat_id"], group)
+        # Partner chatting doesn't answer Justin's "what would you like to add?"
+        await self.command("hello", sender=partner, chat=group)
+        self.assertNotIn("hello", [x["name"] for x in self.db.snapshot()["items"]])
+        reply = await self.command("coffee", sender=123, chat=group)
+        self.assertIn("Coffee has been added", reply["text"])
+        reply = await self.command("/remove eggs", sender=partner, chat=group)
+        self.assertIn("Eggs have been removed", reply["text"])
+        # Reminders still go only to the owner's private chat.
+        self.engine.tick(NOW)
+        payload = json.loads(self.reminders()[0]["payload"])
+        self.assertNotIn("chat_id", payload)
+        telegram = FakeTelegram()
+        while await deliver_one(self.db, self.settings, telegram, NOW):
+            pass
+        self.assertIn(group, telegram.chats)
+        self.assertEqual(telegram.chats[-1], 123)
 
     async def test_old_units_are_removed_on_upgrade(self):
         await self.start()
@@ -163,28 +224,49 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
     async def test_snooze_asks_then_accepts_number_after_restart(self):
         await self.start()
         reply = await self.command("snooze", True)
-        self.assertIn("How many days", reply["text"])
+        self.assertIn("how many days", reply["text"])
         self.assertIsNone(self.db.snapshot()["snoozed_until"])
         self.engine = Engine(Database(self.settings.database), self.settings, self.client)
         self.engine.initialize(NOW)
         for invalid in ("0", "91", "-1", "1.5", "tomorrow", ""):
             reply = await self.command(invalid)
             self.assertIn("whole number", reply["text"])
-            self.assertEqual(self.db.snapshot()["awaiting"], "snooze")
+            self.assertEqual(self.db.snapshot()["awaiting"].get("123"), "snooze")
             self.assertIsNone(self.db.snapshot()["snoozed_until"])
         await self.command("10 days")
         wake = parse(self.db.snapshot()["snoozed_until"])
-        self.assertIsNone(self.db.snapshot()["awaiting"])
-        self.engine.tick(NOW + timedelta(days=7))
-        self.assertEqual(len(self.reminders()), 0)
-        self.engine.tick(wake)
+        self.assertIsNone(self.db.snapshot()["awaiting"].get("123"))
+        # The Monday check-in still arrives; the snooze is an extra reminder on top.
+        await self.tick_and_send(NOW + timedelta(days=7))
         self.assertEqual(len(self.reminders()), 1)
+        await self.tick_and_send(wake)
+        self.assertEqual(len(self.reminders()), 2)
+        self.assertIn("extra grocery reminder", self.reminders()[1]["payload"])
+
+    async def test_snooze_is_only_on_monday_message_and_keeps_monday(self):
+        await self.start()
+        self.engine.tick(NOW)  # Monday check-in
+        monday = json.loads(self.reminders()[0]["payload"])
+        self.assertIn("Snooze", str(monday["reply_markup"]))
+        home = await self.command("home", True)
+        self.assertNotIn("Snooze", str(home["reply_markup"]))
+        next_monday = self.db.snapshot()["next_checkin"]
+        reply = await self.command("/snooze 2")
+        self.assertIn("extra reminder", reply["text"])
+        self.assertEqual(self.db.snapshot()["next_checkin"], next_monday)
+        # No follow-up tomorrow (you picked your own time), extra one in 2 days.
+        await self.tick_and_send(NOW + timedelta(days=1))
+        self.assertEqual(len(self.reminders()), 1)
+        await self.tick_and_send(NOW + timedelta(days=2))
+        self.assertEqual(len(self.reminders()), 2)
+        await self.tick_and_send(NOW + timedelta(days=7))
+        self.assertEqual(len(self.reminders()), 3)
 
     async def test_cancel_and_navigation_exit_prompts(self):
         await self.start()
         await self.command("snooze", True)
         await self.command("cancel", True)
-        self.assertIsNone(self.db.snapshot()["awaiting"])
+        self.assertIsNone(self.db.snapshot()["awaiting"].get("123"))
         self.assertIsNone(self.db.snapshot()["snoozed_until"])
         await self.command("add", True)
         await self.command("list", True)
@@ -195,7 +277,9 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.start()
         before = copy.deepcopy(self.db.snapshot()["items"])
         reply = await self.command("shop", True)
-        self.assertIn("copy it", reply["text"])
+        self.assertIn("Shopping list", reply["text"])
+        self.assertIn("Mon, Sep 28 at 10:00 AM", reply["text"])  # the time you tapped Shop
+        self.assertIn("• eggs", reply["text"])
         self.assertEqual(self.requests, [])
         self.assertEqual(self.db.snapshot()["items"], before)
         with self.db.connect() as db:
@@ -387,6 +471,23 @@ class WebhookTests(unittest.IsolatedAsyncioTestCase):
                 await client.post("/telegram/webhook", json=update, headers=headers)
                 with Database(config.database).connect() as db:
                     self.assertEqual(db.execute("SELECT count(*) FROM inbox").fetchone()[0], 1)
+                # The shared group is accepted only once TELEGRAM_GROUP_ID is set.
+                update = {"update_id": 101, "message": {"from": {"id": 456}, "chat": {"id": -100555, "type": "group"}, "text": "/list"}}
+                await client.post("/telegram/webhook", json=update, headers=headers)
+                with Database(config.database).connect() as db:
+                    self.assertEqual(db.execute("SELECT count(*) FROM inbox").fetchone()[0], 1)
+            config = Settings("test", 123, "x" * 32, str(Path(temp) / "db"), group=-100555)
+            app = create_app(config, start_worker=False)
+            async with app.router.lifespan_context(app), httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                headers = {"X-Telegram-Bot-Api-Secret-Token": config.secret}
+                await client.post("/telegram/webhook", json=update, headers=headers)
+                notice = {"update_id": 102, "message": {"from": {"id": 456}, "chat": {"id": -100555, "type": "group"}, "new_chat_members": []}}
+                await client.post("/telegram/webhook", json=notice, headers=headers)
+                with Database(config.database).connect() as db:
+                    ids = [row[0] for row in db.execute("SELECT id FROM inbox")]
+                self.assertEqual(ids, [99, 101])
                 self.assertEqual((await client.get("/health")).json(), {"status": "ok"})
                 self.assertEqual((await client.post("/telegram/webhook", content="bad json", headers=headers)).status_code, 400)
                 self.assertEqual((await client.post("/telegram/webhook", content="x" * 128001, headers=headers)).status_code, 413)

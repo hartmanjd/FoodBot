@@ -22,6 +22,7 @@ class Settings:
     max_followups: int = 2
     openai_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    group: int = 0  # optional shared Telegram group ID (a negative number); 0 means none
 
     @classmethod
     def from_env(cls):
@@ -49,6 +50,10 @@ class Settings:
         followups = int(os.getenv("MAX_FOLLOWUPS", "2"))
         if not 0 <= followups <= 2:
             raise ValueError("MAX_FOLLOWUPS must be 0, 1, or 2.")
+        group = os.getenv("TELEGRAM_GROUP_ID", "").strip()
+        if group and not re.fullmatch(r"-\d+", group):
+            raise ValueError("TELEGRAM_GROUP_ID must be the group's ID, a negative number like -1001234567890.")
         return cls(token, int(owner), secret, os.getenv("DATABASE_PATH", "data/foodbot.sqlite3"),
                    timezone, day, time, start, end, followups,
-                   os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+                   os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                   group=int(group) if group else 0)

@@ -10,5 +10,5 @@ class Telegram:
             raise ValueError("Telegram rejected request")
         return data["result"]
 
-    async def send(self, owner, payload):
-        return await self.call("sendMessage", {"chat_id": owner, **payload})
+    async def send(self, chat_id, payload):
+        return await self.call("sendMessage", {"chat_id": chat_id, **payload})

@@ -60,8 +60,10 @@ class Database:
                    (json.dumps(state),))
 
     @staticmethod
-    def queue(db, text, buttons=None, kind="reply", generation=None):
+    def queue(db, text, buttons=None, kind="reply", generation=None, chat_id=None):
         payload = {"text": text}
+        if chat_id:
+            payload["chat_id"] = chat_id  # reply in the chat the message came from
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": buttons}
         db.execute("INSERT INTO outbox(payload,kind,generation) VALUES (?,?,?)",

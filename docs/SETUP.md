@@ -18,7 +18,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m foodbot.demo
 ```
 
-You should see a sample conversation with your five groceries, easy list editing, and a three-day snooze. This preview uses temporary data and contacts no external services. You can safely run it again.
+You should see a sample conversation with your five groceries, easy list editing, and a three-day extra reminder. This preview uses temporary data and contacts no external services. You can safely run it again.
 
 The `.venv` folder is a private copy of Python's packages for this project. We call its Python directly so you don't need to change PowerShell's script execution settings.
 
@@ -161,27 +161,28 @@ The second command should show your domain ending in `/telegram/webhook`, with n
 
 ## 7. Try the simple habit loop
 
-Your first page has just three actions:
+Your home screen has just two buttons:
 
-| Action | What happens |
+| Button | What happens |
 | --- | --- |
-| **Review groceries** | Shows your saved list, with **Add item** and **Remove item** buttons. |
-| **Shop** | Makes a copyable shopping list to use in your store app or at the store. |
-| **Snooze** | Asks how many days to wait until your next check-in. |
+| **Groceries** | Shows your saved list, with **Add item**, **Remove item**, and **New list** buttons. |
+| **Shop** | Shows your current list with the date and time. |
+
+The Monday check-in message also has a **Snooze** button for an extra reminder.
 
 1. Send `/start`. New users start with eggs, hash browns, Greek yogurt, bread, and English muffins. Existing users keep their current list.
-2. Tap **Review groceries → Add item**, then type `coffee`. You can add several items with `coffee, apples` or one per line. If you want a specific amount, put the number first: `3 lemons`.
-3. Tap **Remove item**, then tap an item's name to remove it. It stays removed until you add it again.
-4. Tap **Back** for the three main actions.
-5. Tap **Snooze**, then reply `3`. The bot confirms a check-in three days ahead at 10 a.m. Pacific. You can enter any whole number from 1 to 90. **Cancel** leaves the timing unchanged. The question and any saved snooze survive restarts.
+2. Tap **Groceries → Add item**, then type `coffee`. You can add several items with `coffee, apples` or one per line. If you want a specific amount, put the number first: `3 lemons`. **New list** replaces the whole list with what you type.
+3. Tap **Remove item**, then tap items to remove them, or type several like `eggs, bread`. Tap **Done removing** when finished. Removed items stay removed until you add them again.
+4. Tap **Back** for the home screen.
+5. Send `/checkin` to see a check-in message, tap its **Snooze** button, then reply `3`. The bot confirms an extra reminder three days ahead at 10 a.m. Pacific. Your Monday check-in doesn't move. You can enter any whole number from 1 to 90. **Cancel** leaves the timing unchanged.
 6. Send `/status` to check the date. After testing, `/resume` schedules the next 10 a.m. check-in and returns to the normal Monday schedule after that.
-7. Tap **Shop** to get a copyable list. It doesn't contact Instacart or place an order.
+7. Tap **Shop** to see your list with the date and time. It doesn't contact Instacart or place an order.
 8. When you finish shopping, send `/done` to stop this week's follow-ups. Your list stays saved for the next trip. This is a habit check-off, with no inventory tracking.
 9. Enable Telegram notifications for this chat and pin it if helpful.
 
 Starter items are plain names with no amounts. Add a number whenever you want one, like `12 eggs`. Repeat intervals, still-stocked controls, essentials mode, and automatic replenishment have been removed.
 
-To try an immediate reminder, send `/checkin`. Reminders invite you to review, shop, or snooze; they don't guess what's running out.
+To try an immediate reminder, send `/checkin`. Reminders invite you to check your list, shop, or snooze for an extra reminder; they don't guess what's running out.
 
 ## 8. Optional: understand casual replies with OpenAI
 
@@ -204,10 +205,23 @@ With this enabled, your casual message and current list are sent to OpenAI for i
 ## 9. Keep it working
 
 - Enable backups for your Railway volume; keep at least a recent known-good backup. See [operations](OPERATIONS.md) before restoring.
-- Use `/status` to inspect reminders. `/pause` stops nudges indefinitely. `/resume` restarts them; `/snooze N` schedules a return and also resumes a paused bot.
-- Schedule changes go in Railway Variables. Redeploy after changing them. The next weekly slot is recalculated; an already saved snooze keeps its promised time.
-- Edit your saved list through **Review groceries**. Adding an item that's already on the list updates its number, like `5 lemons`. The list is reused until you change it.
+- Use `/status` to inspect reminders. `/pause` stops nudges indefinitely. `/resume` restarts them; `/snooze N` adds an extra reminder in N days and also resumes a paused bot.
+- Schedule changes go in Railway Variables. Redeploy after changing them. The next weekly slot is recalculated; an already saved extra reminder keeps its promised time.
+- Edit your saved list through **Groceries**. Adding an item that's already on the list updates its number, like `5 lemons`. The list is reused until you change it.
 - After editing code, commit and push it through GitHub Desktop. Railway deploys the new version. Keep the volume attached.
+
+## 10. Optional: share the list in a group chat
+
+You and someone else (like a partner) can share one grocery list in a Telegram group. Anyone in the group can use every button and command. Automatic check-ins still go only to your private chat. If anyone in the group sends `/done`, `/snooze` or `/pause`, it changes your check-ins too.
+
+1. In Telegram, open **@BotFather**, send `/setprivacy`, choose your bot, then choose **Disable**. This lets the bot see normal messages in the group, like `coffee, apples` after tapping Add item.
+2. Create a Telegram group with the other person, then add your bot to it. If the bot was already in the group before step 1, remove it and add it again.
+3. Send `/start` in the group. The bot won't answer yet.
+4. In Railway, open your service's **Logs**. Look for a line like `Ignored a group chat. To use it, set TELEGRAM_GROUP_ID=-1001234567890`.
+5. In Railway **Variables**, add `TELEGRAM_GROUP_ID` with that number, including the minus sign. Railway redeploys.
+6. Send `/list` in the group. The bot should answer there.
+
+Keep the group just for groceries: the bot replies to every message sent there. If the bot stops answering in the group later, Telegram may have upgraded it to a "supergroup" with a new ID. Check the logs for the new number and update `TELEGRAM_GROUP_ID`.
 
 ## If something gets stuck
 
@@ -220,7 +234,7 @@ With this enabled, your casual message and current list are sent to OpenAI for i
 | No scheduled nudges | Send `/status`; check pause/snooze, quiet hours, notification permissions, and that Railway is running with Serverless off. Two ignored follow-ups intentionally produce a quiet break until next week. |
 | List disappeared after deployment | Confirm `/data/foodbot.sqlite3` and the `/data` volume. An ephemeral database cannot survive replacement; restore a backup if needed. |
 | Casual messages fail | Commands still work. Check OpenAI key, billing, model availability, and provider status. |
-| A button says it is old | The list changed since the button appeared. Open **Review groceries → Remove item** again for current buttons. |
+| A button says it is old | The list changed since the button appeared. Open **Groceries → Remove item** again for current buttons. |
 
 For code checks, run:
 

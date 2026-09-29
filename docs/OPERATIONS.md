@@ -10,15 +10,14 @@ The health endpoint verifies database connectivity and that the worker is making
 
 ## Habit and reminder behavior
 
-- `/start` starts check-ins and shows only Review groceries, Shop, and Snooze. New users get the five starter groceries once; existing lists are preserved.
-- Review groceries offers Add item and Remove item. Add accepts names (`eggs`), comma/newline-separated names, and an optional number first (`3 lemons`). Items are shown exactly like that, with no default units. Removal buttons carry the list revision so an old button cannot remove a different item.
+- `/start` starts check-ins and shows only Groceries and Shop. Snooze appears only on automatic check-in messages. New users get the five starter groceries once; existing lists are preserved.
+- Groceries offers Add item, Remove item, and New list. Add accepts names (`eggs`), comma/newline-separated names, and an optional number first (`3 lemons`). Items are shown exactly like that, with no default units. Remove accepts several comma/newline-separated names; if one isn't on the list, nothing is removed. Remove buttons stay open for more taps and carry the list revision so an old button cannot remove a different item. New list replaces the whole list.
 - The list is reused until edited. Removed items never return automatically.
-- Shop formats the list for copying. It does not contact a shopping provider, mark anything bought, or stop follow-ups.
-- Snooze asks for 1–90 whole days. The pending question is persisted. Invalid replies ask again; Cancel leaves the previous schedule unchanged. Another explicit command exits the prompt.
+- Shop shows the list with the current date and time. It does not contact a shopping provider, mark anything bought, or stop follow-ups.
+- Snooze asks for 1–90 whole days and schedules one extra reminder at the check-in time that many days ahead. The regular weekly check-in is unchanged. Snoozing cancels this week's remaining follow-ups, and the extra reminder has no follow-ups of its own. Snoozing again replaces the extra reminder; `/done` and `/resume` clear it. The pending question is persisted. Invalid replies ask again; Cancel leaves the previous schedule unchanged. Another explicit command exits the prompt.
 - Weekly check-in: Monday at 10 a.m. Pacific, configurable through environment variables. There are no inventory-based triggers between weekly check-ins.
 - Up to two daily follow-ups, then a quiet break until the next weekly check-in. Reviewing or editing the list doesn't mean shopping is finished.
-- At least 20 hours between automatic nudges, except an explicit snooze return. No automatic messages during quiet hours. Explicit replies can arrive whenever requested.
-- Snooze suppresses every automatic reminder until the selected local date/time. A long snooze produces one return check-in, not a backlog.
+- At least 20 hours between automatic nudges, except an extra reminder you asked for. No automatic messages during quiet hours. Explicit replies can arrive whenever requested.
 - `/done` ends follow-ups until next week and keeps the saved list. `/pause` stops check-ins indefinitely; `/resume` restarts them at the next daily slot.
 - A missed check-in after downtime arrives at the next eligible worker check outside quiet hours.
 
@@ -42,7 +41,7 @@ To restore manually, stop the application, preserve the current database and its
 
 The database contains shopping lists, legacy staple preferences, historical purchase records, Telegram input events, and outgoing messages. There is no automatic data retention cleanup yet. It is a local SQLite file without application-level encryption. Restrict access to your hosting project and backups. `.env`, databases, and backups are excluded from source control and Docker build context.
 
-Only the configured owner in a private Telegram chat can submit actions. Unknown users and groups are ignored. The webhook secret is checked before parsing the body. There is no public endpoint to read groceries. Receipt attachments are not downloaded or interpreted in this version.
+Only the configured owner in a private Telegram chat, or anyone in the optional group set by `TELEGRAM_GROUP_ID`, can submit actions. Other users and groups are ignored; an ignored group's ID is logged to help setup. Replies go to the chat that asked; automatic reminders go only to the owner's private chat. Each person has their own pending question, so one person's message can't answer another's prompt. The webhook secret is checked before parsing the body. There is no public endpoint to read groceries. Receipt attachments are not downloaded or interpreted in this version.
 
 ## Compatibility and deferred features
 

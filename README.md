@@ -6,15 +6,16 @@ A personal Telegram grocery companion that starts the conversation for you.
 
 Your defaults are **Monday at 10 a.m., America/Los_Angeles**, with eggs, hash browns, Greek yogurt, bread, and English muffins. New users get these groceries automatically on `/start`. Existing saved lists are preserved. Items are plain names; type a number first (like `3 lemons`) only when you want an amount.
 
-## Three simple actions
+## Two simple buttons
 
-- **Review groceries** — see the saved list, tap **Add item** and type names, or tap **Remove item** and choose what to remove.
-- **Shop** — get a copyable list for your store app or trip to the store.
-- **Snooze** — the bot asks how many days until your next check-in. Reply with a number from 1 to 90.
+- **Groceries** — see the saved list, tap **Add item** and type names, tap **Remove item** to remove one or more items, or tap **New list** to start over.
+- **Shop** — shows your current list with the date and time. (An Instacart connection may come later.)
 
-The focus is building the grocery habit. Lists stay saved between trips. There are no inventory estimates, still-stocked controls, essentials mode, or Instacart calls. Monday check-ins, two bounded follow-ups, quiet hours, and durable snoozes keep the habit moving. `/done` ends the week's follow-ups while keeping the list.
+The Monday check-in message also has a **Snooze** button. It asks how many days (1–90) and sends one extra reminder then. It doesn't move the regular Monday check-in.
 
-Optional OpenAI conversational edits still ask for confirmation. Every button flow works without an AI key. Private-chat owner restriction, webhook authentication, SQLite persistence, input deduplication, and durable outgoing messages remain in place.
+The focus is building the grocery habit. Lists stay saved between trips. There are no inventory estimates, still-stocked controls, essentials mode, or Instacart calls. Monday check-ins, two bounded follow-ups, quiet hours, and optional extra reminders keep the habit moving. `/done` ends the week's follow-ups while keeping the list.
+
+Optional OpenAI conversational edits still ask for confirmation. Every button flow works without an AI key. Private-chat owner restriction (plus an optional shared group, see setup section 10), webhook authentication, SQLite persistence, input deduplication, and durable outgoing messages remain in place.
 
 ## Try the conversation without accounts
 
@@ -30,7 +31,7 @@ This prints a sample conversation using a temporary database. It sends nothing a
 
 Telegram → authenticated FastAPI webhook → SQLite inbox → single background worker → grocery state and outgoing replies → Telegram.
 
-Reminder timing is ordinary Python code. OpenAI is optional and proposes only additions, removals, or snoozes. Shop formats your saved list without external calls or purchase tracking. Existing inventory data and purchase history are preserved during the upgrade but are no longer used.
+Reminder timing is ordinary Python code. OpenAI is optional and proposes only additions, removals, or extra reminders. Shop shows your saved list with a timestamp without external calls or purchase tracking. Existing inventory data and purchase history are preserved during the upgrade but are no longer used.
 
 ## Development
 

@@ -14,8 +14,10 @@ from .engine import Engine
 from .schedule import utcnow
 from .worker import run_worker
 
+log = logging.getLogger(__name__)
 
-def owner_update(update, owner):
+
+def allowed_update(update, settings):
     if not isinstance(update, dict) or type(update.get("update_id")) is not int:
         return False
     callback = update.get("callback_query")
@@ -26,9 +28,20 @@ def owner_update(update, owner):
         return False
     author = (callback if callback else message).get("from", {})
     chat = message.get("chat", {})
-    return (isinstance(author, dict) and isinstance(chat, dict)
-            and author.get("id") == owner and chat.get("id") == owner
-            and chat.get("type") == "private")
+    if not isinstance(author, dict) or not isinstance(chat, dict):
+        return False
+    # 1) The owner, in their private chat with the bot.
+    if chat.get("type") == "private":
+        return author.get("id") == settings.owner and chat.get("id") == settings.owner
+    # 2) Anyone in the shared grocery group set by TELEGRAM_GROUP_ID.
+    if chat.get("type") in ("group", "supergroup"):
+        if not settings.group or chat.get("id") != settings.group:
+            # Printed to the logs so you can find your group's ID during setup.
+            log.warning("Ignored a group chat. To use it, set TELEGRAM_GROUP_ID=%s", chat.get("id"))
+            return False
+        # Skip group notices with no text, like "someone joined the group".
+        return bool(callback) or isinstance(message.get("text"), str)
+    return False
 
 
 def create_app(settings=None, start_worker=True):
@@ -79,7 +92,7 @@ def create_app(settings=None, start_worker=True):
             update = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             raise HTTPException(400, "Invalid JSON")
-        if not owner_update(update, app.state.config.owner):
+        if not allowed_update(update, app.state.config):
             return {"ok": True}
         app.state.database.enqueue(update)
         # Clearing the button spinner is best effort, independent of durable processing.

@@ -21,7 +21,11 @@ async def deliver_one(database, settings, telegram, now):
     if not row:
         return False
     try:
-        await telegram.send(settings.owner, json.loads(row["payload"]))
+        payload = json.loads(row["payload"])
+        # Replies go back to the chat they came from. Reminders have no chat_id,
+        # so they go to the owner's private chat.
+        chat_id = payload.pop("chat_id", settings.owner)
+        await telegram.send(chat_id, payload)
     except Exception as exc:
         attempts = row["attempts"] + 1
         delay = min(3600, 15 * (2 ** min(attempts, 8)))
