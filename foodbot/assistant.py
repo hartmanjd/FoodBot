@@ -1,17 +1,14 @@
 """Optional natural-language parsing. AI proposes edits; the owner confirms them."""
 import json
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
-
-UNITS = ("each", "package", "gallon", "liter", "oz", "lb", "can", "bunch")
-
 
 class Action(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["add", "remove", "snooze"]
     item: str = Field(max_length=80)
-    quantity: float = Field(gt=0, le=100)
-    unit: Literal["each", "package", "gallon", "liter", "oz", "lb", "can", "bunch"]
+    # A number only when the user typed one (like "3 lemons"); otherwise null.
+    quantity: Optional[float] = Field(gt=0, le=999)
     days: int = Field(ge=1, le=90)
 
 
@@ -34,8 +31,10 @@ async def interpret(client, settings, text, state):
                 "snooze all reminders N days. No inventory tracking or restocking predictions. Never claim an action happened. "
                 "Never infer purchases or submit orders. If unclear, ask one short clarification "
                 "and return no actions. Use exact existing names when referring to existing items. "
-                "Default add quantity 1 package only if unspecified. "
-                "Use item='', quantity=1, unit='package', days=1 for unused fields. "
+                "Keep items as plain names. Only set quantity when the user states a number "
+                "(e.g. '3 lemons' -> item 'lemons', quantity 3); otherwise quantity is null. "
+                "Never invent amounts or units like 'package'. "
+                "Use item='', quantity=null, days=1 for unused fields. "
                 "For bulk adds, quantities are final desired amounts, not increments. "
                 "If request includes anything outside these actions, clarify instead of partially applying it."
             ),

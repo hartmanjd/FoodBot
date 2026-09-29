@@ -85,11 +85,38 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.db.snapshot()["items"]), 7)
         await self.command("add", True)
         before = self.db.snapshot()["items"]
-        await self.command("tea, eggs | nan | each")
+        await self.command("tea, 0 eggs")
         self.assertEqual(self.db.snapshot()["items"], before)
         self.assertEqual(self.db.snapshot()["awaiting"], "add")
         await self.command("tea")
         self.assertEqual(len(self.db.snapshot()["items"]), 8)
+
+    async def test_items_show_plain_names_or_typed_numbers(self):
+        await self.start()
+        reply = await self.command("/list")
+        self.assertIn("• eggs\n", reply["text"])
+        self.assertNotIn("package", reply["text"])
+        reply = await self.command("/add 3 lemons, milk")
+        self.assertIn("• 3 lemons", reply["text"])
+        self.assertIn("• milk", reply["text"])
+        reply = await self.command("/add 5 lemons")
+        self.assertIn("• 5 lemons", reply["text"])
+        self.assertNotIn("3 lemons", reply["text"])
+        reply = await self.command("/remove lemons")
+        self.assertNotIn("lemons", reply["text"])
+
+    async def test_old_units_are_removed_on_upgrade(self):
+        await self.start()
+        with self.db.transaction() as db:
+            old = self.db.read(db)
+            old["schema"] = 2
+            old["items"] = [{"name": "bread", "quantity": 1, "unit": "package"},
+                            {"name": "eggs", "quantity": 12, "unit": "each"},
+                            {"name": "milk", "quantity": 2, "unit": "gallon"}]
+            self.db.save(db, old)
+        self.engine.initialize(NOW)
+        reply = await self.command("/list")
+        self.assertIn("• bread\n• 12 eggs\n• 2 gallon milk", reply["text"])
 
     async def test_duplicate_events_do_not_apply_twice(self):
         await self.start()
@@ -201,7 +228,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         before = self.db.snapshot()
         self.engine.initialize(NOW)
         state = self.db.snapshot()
-        self.assertEqual(state["schema"], 2)
+        self.assertEqual(state["schema"], 3)
         self.assertEqual(state["items"], before["items"])
         self.assertEqual(state["snoozed_until"], before["snoozed_until"])
         self.assertEqual(state["legacy_inventory"]["staples"], before["staples"])
@@ -283,8 +310,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.start()
         self.engine.settings = replace(self.settings, openai_key="fake")
         proposal = {"clarification": "", "actions": [
-            {"type": "remove", "item": "eggs", "quantity": 1, "unit": "each", "days": 1},
-            {"type": "add", "item": "coffee", "quantity": 2, "unit": "package", "days": 1}]}
+            {"type": "remove", "item": "eggs", "quantity": None, "days": 1},
+            {"type": "add", "item": "coffee", "quantity": 2, "days": 1}]}
         payload = {"status": "completed", "output": [{"type": "message", "content": [
             {"type": "output_text", "text": json.dumps(proposal)}]}]}
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))) as client:

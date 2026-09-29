@@ -5,7 +5,7 @@ import re
 import secrets
 from datetime import timedelta
 
-from .assistant import UNITS, interpret
+from .assistant import interpret
 from .schedule import stamp, parse, local_slot, next_weekly, next_daily, pretty, is_quiet
 
 log = logging.getLogger(__name__)
@@ -26,13 +26,10 @@ Snooze — choose how many days until the next check-in.
 /status — see your next reminder
 /checkin — try a check-in now
 
-Optional quantities: /add eggs | 12 | each
-Units: each, package, gallon, liter, oz, lb, can, bunch.
+Want an amount? Put the number first: /add 3 lemons
 Your list stays saved between trips until you change it."""
 
-STARTERS = [("eggs", 12, "each"), ("hash browns", 1, "package"),
-            ("Greek yogurt", 1, "package"), ("bread", 1, "package"),
-            ("English muffins", 1, "package")]
+STARTERS = ["eggs", "hash browns", "Greek yogurt", "bread", "English muffins"]
 
 
 def button(text, data):
@@ -54,7 +51,7 @@ def cancel_menu():
 
 
 def initial(settings, now):
-    return {"schema": 2, "started": False, "paused": False, "snoozed_until": None,
+    return {"schema": 3, "started": False, "paused": False, "snoozed_until": None,
             "next_checkin": stamp(next_weekly(now, settings)), "followup": None,
             "followups": 0, "generation": 0, "revision": 0,
             "items": [], "pending": None, "awaiting": None, "last_nudge": None,
@@ -66,6 +63,22 @@ def normalized(name):
     if not name or len(name) > 80:
         raise ValueError("Use an item name between 1 and 80 characters.")
     return name
+
+
+def split_quantity(text):
+    """Turn "3 lemons" into ("lemons", 3). Plain "eggs" becomes ("eggs", None)."""
+    text = text.strip()
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s+(.+)", text)
+    if match:
+        return match[2], float(match[1])
+    return text, None
+
+
+def item_text(item):
+    """How an item is shown: "eggs", or "3 lemons" if it has a number."""
+    if item.get("quantity") is None:
+        return item["name"]
+    return f"{item['quantity']:g} {item['name']}"
 
 
 def find_item(items, name):
@@ -84,17 +97,18 @@ def cancel_reminders(state):
     state["followups"] = 0
 
 
-def add_item(state, name, quantity=1, unit="package"):
+def add_item(state, name, quantity=None):
     name = normalized(name)
-    if unit not in UNITS or not 0 < quantity <= 100:
-        raise ValueError("Quantity must be 0–100 (above zero); see /help for units.")
+    if quantity is not None and not 0 < quantity <= 999:
+        raise ValueError("Numbers must be above 0 and at most 999.")
     old = find_item(state["items"], name)
     if not old and len(state["items"]) >= 20:
         raise ValueError("Keep this list to 20 items. Remove an item before adding more.")
     if old:
-        old.update(quantity=quantity, unit=unit)
+        # Adding an item that's already there just updates its number (or clears it).
+        old["quantity"] = quantity
     else:
-        state["items"].append({"name": name, "quantity": quantity, "unit": unit})
+        state["items"].append({"name": name, "quantity": quantity})
     edit(state)
 
 
@@ -102,7 +116,7 @@ def list_text(state):
     if not state["items"]:
         return "Your grocery list is empty. Tap Add item in Review groceries to get started."
     return "Your groceries 🛒\n" + "\n".join(
-        f"• {x['name']} — {x['quantity']:g} {x['unit']}" for x in state["items"])
+        "• " + item_text(x) for x in state["items"])
 
 
 class Engine:
@@ -130,6 +144,18 @@ class Engine:
                     state["followup"] = stamp(next_daily(now, self.settings))
                 state["generation"] += 1
                 state["schedule"] = schedule
+            if state["schema"] < 3:
+                # Older lists stored a unit on every item ("bread — 1 package").
+                # Drop the units so the list shows plain names.
+                for item in state["items"]:
+                    unit = item.pop("unit", None)
+                    if unit == "package" or (unit == "each" and item.get("quantity") == 1):
+                        item["quantity"] = None
+                    elif unit and unit != "each":
+                        item["name"] = unit + " " + item["name"]  # "2 gallon milk"
+                state["schema"] = 3
+                state["pending"] = None
+                state["revision"] += 1
             self.db.save(db, state)
 
     def nudge(self, state, now, followup=False):
@@ -185,7 +211,7 @@ class Engine:
 
     def apply_action(self, state, action, now):
         if action["type"] == "add":
-            add_item(state, action["item"], action["quantity"], action["unit"])
+            add_item(state, action["item"], action["quantity"])
         elif action["type"] == "remove":
             self.remove(state, action["item"])
         elif action["type"] == "snooze":
@@ -194,6 +220,7 @@ class Engine:
             raise ValueError("That action is no longer supported.")
 
     def remove(self, state, name):
+        name, _ = split_quantity(name)  # "/remove 3 lemons" also works
         name = normalized(name)
         if not find_item(state["items"], name):
             raise ValueError("I couldn't find that item. Tap Remove item to choose from your list.")
@@ -202,13 +229,11 @@ class Engine:
 
     def add_input(self, state, text):
         # One item per line (or comma); the whole batch is validated before commit.
+        # "eggs" adds just eggs. "3 lemons" adds lemons with the number 3.
         entries = re.split(r"[\n,]+", text)
         for entry in entries:
-            parts = [x.strip() for x in entry.split("|")]
-            if not 1 <= len(parts) <= 3:
-                raise ValueError("Use an item name, or name | quantity | unit.")
-            add_item(state, parts[0], float(parts[1]) if len(parts) > 1 else 1,
-                     parts[2] if len(parts) > 2 else "package")
+            name, quantity = split_quantity(entry)
+            add_item(state, name, quantity)
 
     async def process_one(self, now):
         with self.db.connect() as db:
@@ -225,7 +250,7 @@ class Engine:
             reply, buttons, _ = await self.handle(candidate, text, bool(callback), now)
         except (ValueError, IndexError, KeyError):
             candidate = state
-            reply = "I couldn't apply that. Use an item name, or name | quantity | unit. Your list is unchanged."
+            reply = "I couldn't apply that. Send an item like eggs or 3 lemons. Your list is unchanged."
             buttons = cancel_menu() if state.get("awaiting") else review_menu()
         # External work finishes before the transaction; only one worker mutates state.
         with self.db.transaction() as db:
@@ -279,8 +304,8 @@ class Engine:
         if command == "start":
             if not state["started"]:
                 if not state["items"]:
-                    for name, qty, unit in STARTERS:
-                        add_item(state, name, qty, unit)
+                    for name in STARTERS:
+                        add_item(state, name)
                 state["started"] = True
             return ("Hi! I'm Foodbot 🌱 Let's keep grocery shopping simple.\n"
                     f"Your next weekly check-in is {pretty(state['next_checkin'], self.settings)}.", menu(), None)
@@ -333,7 +358,7 @@ class Engine:
         if command == "add":
             if not arg:
                 state["awaiting"] = "add"
-                return "What would you like to add? Send an item name, or several names separated by commas or new lines.\nFor quantities, try eggs | 12 | each.", cancel_menu(), None
+                return "What would you like to add? Send an item name, or several names separated by commas or new lines.\nWant an amount? Put the number first, like 3 lemons.", cancel_menu(), None
             self.add_input(state, arg)
             return list_text(state), review_menu(), None
         if command in ("remove", "skip"):
@@ -343,7 +368,7 @@ class Engine:
             if not state["items"]:
                 return "Your list is empty. Tap Add item to get started.", review_menu(), None
             return "Tap an item to remove it.", [
-                [button(x["name"], f"delete:{i}:{state['revision']}")]
+                [button(item_text(x), f"delete:{i}:{state['revision']}")]
                 for i, x in enumerate(state["items"])
             ] + [[button("Back to groceries", "list")]], None
         if command == "delete":
@@ -391,7 +416,7 @@ class Engine:
             state["pending"] = {"id": token, "actions": actions, "expires": stamp(now + timedelta(minutes=30))}
             summaries = []
             for a in actions:
-                summaries.append({"add": f"Set {a['item']} to {a['quantity']:g} {a['unit']}",
+                summaries.append({"add": "Add " + item_text({"name": a["item"], "quantity": a["quantity"]}),
                                   "remove": f"Remove {a['item']} from your list",
                                   "snooze": f"Snooze all nudges for {a['days']} days"}[a["type"]])
             return "Apply these edits?\n" + "\n".join("• " + x for x in summaries), [[button("Apply", "apply:" + token), button("Cancel", "cancel")]], None

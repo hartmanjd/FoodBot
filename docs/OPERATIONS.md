@@ -11,7 +11,7 @@ The health endpoint verifies database connectivity and that the worker is making
 ## Habit and reminder behavior
 
 - `/start` starts check-ins and shows only Review groceries, Shop, and Snooze. New users get the five starter groceries once; existing lists are preserved.
-- Review groceries offers Add item and Remove item. Add accepts names, comma/newline-separated names, or `name | quantity | unit`. Removal buttons carry the list revision so an old button cannot remove a different item.
+- Review groceries offers Add item and Remove item. Add accepts names (`eggs`), comma/newline-separated names, and an optional number first (`3 lemons`). Items are shown exactly like that, with no default units. Removal buttons carry the list revision so an old button cannot remove a different item.
 - The list is reused until edited. Removed items never return automatically.
 - Shop formats the list for copying. It does not contact a shopping provider, mark anything bought, or stop follow-ups.
 - Snooze asks for 1–90 whole days. The pending question is persisted. Invalid replies ask again; Cancel leaves the previous schedule unchanged. Another explicit command exits the prompt.

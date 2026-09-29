@@ -170,7 +170,7 @@ Your first page has just three actions:
 | **Snooze** | Asks how many days to wait until your next check-in. |
 
 1. Send `/start`. New users start with eggs, hash browns, Greek yogurt, bread, and English muffins. Existing users keep their current list.
-2. Tap **Review groceries → Add item**, then type `coffee`. You can add several items with `coffee, apples` or one per line. If you want a specific amount, type `eggs | 12 | each`.
+2. Tap **Review groceries → Add item**, then type `coffee`. You can add several items with `coffee, apples` or one per line. If you want a specific amount, put the number first: `3 lemons`.
 3. Tap **Remove item**, then tap an item's name to remove it. It stays removed until you add it again.
 4. Tap **Back** for the three main actions.
 5. Tap **Snooze**, then reply `3`. The bot confirms a check-in three days ahead at 10 a.m. Pacific. You can enter any whole number from 1 to 90. **Cancel** leaves the timing unchanged. The question and any saved snooze survive restarts.
@@ -179,7 +179,7 @@ Your first page has just three actions:
 8. When you finish shopping, send `/done` to stop this week's follow-ups. Your list stays saved for the next trip. This is a habit check-off, with no inventory tracking.
 9. Enable Telegram notifications for this chat and pin it if helpful.
 
-The starter amounts are 12 eggs and one package each of the other items. Adjust these through Add item whenever needed. Repeat intervals, still-stocked controls, essentials mode, and automatic replenishment have been removed.
+Starter items are plain names with no amounts. Add a number whenever you want one, like `12 eggs`. Repeat intervals, still-stocked controls, essentials mode, and automatic replenishment have been removed.
 
 To try an immediate reminder, send `/checkin`. Reminders invite you to review, shop, or snooze; they don't guess what's running out.
 
@@ -206,7 +206,7 @@ With this enabled, your casual message and current list are sent to OpenAI for i
 - Enable backups for your Railway volume; keep at least a recent known-good backup. See [operations](OPERATIONS.md) before restoring.
 - Use `/status` to inspect reminders. `/pause` stops nudges indefinitely. `/resume` restarts them; `/snooze N` schedules a return and also resumes a paused bot.
 - Schedule changes go in Railway Variables. Redeploy after changing them. The next weekly slot is recalculated; an already saved snooze keeps its promised time.
-- Edit your saved list through **Review groceries**. Add item can also update an existing quantity. The list is reused until you change it.
+- Edit your saved list through **Review groceries**. Adding an item that's already on the list updates its number, like `5 lemons`. The list is reused until you change it.
 - After editing code, commit and push it through GitHub Desktop. Railway deploys the new version. Keep the volume attached.
 
 ## If something gets stuck

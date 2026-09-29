@@ -4,7 +4,7 @@ A personal Telegram grocery companion that starts the conversation for you.
 
 **Start here: [beginner setup guide](docs/SETUP.md).** It walks through Windows setup, Telegram, Railway, and a first-use checklist. You can stop after any numbered section and come back later.
 
-Your defaults are **Monday at 10 a.m., America/Los_Angeles**, with eggs, hash browns, Greek yogurt, bread, and English muffins. New users get these groceries automatically on `/start`. Existing saved lists are preserved. Quantities are editable starting assumptions.
+Your defaults are **Monday at 10 a.m., America/Los_Angeles**, with eggs, hash browns, Greek yogurt, bread, and English muffins. New users get these groceries automatically on `/start`. Existing saved lists are preserved. Items are plain names; type a number first (like `3 lemons`) only when you want an amount.
 
 ## Three simple actions
 
