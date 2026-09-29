@@ -105,6 +105,22 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         reply = await self.command("/remove lemons")
         self.assertNotIn("lemons", reply["text"])
 
+    async def test_add_and_remove_say_what_changed(self):
+        await self.start()
+        reply = await self.command("/add milk")
+        self.assertTrue(reply["text"].startswith("Milk has been added.\n\n"))
+        reply = await self.command("/remove eggs")
+        self.assertTrue(reply["text"].startswith("Eggs have been removed."))
+        await self.command("add", True)
+        reply = await self.command("coffee, 3 lemons, apples")
+        self.assertTrue(reply["text"].startswith("Coffee, 3 lemons and apples have been added."))
+        reply = await self.command("remove", True)
+        tap = reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"]  # hash browns
+        reply = await self.command(tap, True)
+        self.assertTrue(reply["text"].startswith("Hash browns have been removed."))
+        reply = await self.command("home", True)
+        self.assertNotIn("One small step", reply["text"])
+
     async def test_old_units_are_removed_on_upgrade(self):
         await self.start()
         with self.db.transaction() as db:

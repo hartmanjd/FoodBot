@@ -81,6 +81,22 @@ def item_text(item):
     return f"{item['quantity']:g} {item['name']}"
 
 
+def changed_text(names, verb):
+    """(["milk"], "added") -> "Milk has been added."
+    (["eggs"], "removed") -> "Eggs have been removed." """
+    if len(names) == 1:
+        joined = names[0]
+    else:
+        joined = ", ".join(names[:-1]) + " and " + names[-1]
+    # Simple grammar guess: several items, or a name ending in "s", gets "have".
+    if len(names) > 1 or names[0].endswith("s"):
+        helper = "have"
+    else:
+        helper = "has"
+    sentence = f"{joined} {helper} been {verb}."
+    return sentence[0].upper() + sentence[1:]
+
+
 def find_item(items, name):
     return next((x for x in items if x["name"].casefold() == name.casefold()), None)
 
@@ -212,28 +228,36 @@ class Engine:
     def apply_action(self, state, action, now):
         if action["type"] == "add":
             add_item(state, action["item"], action["quantity"])
+            added = item_text({"name": action["item"], "quantity": action["quantity"]})
+            return changed_text([added], "added")
         elif action["type"] == "remove":
-            self.remove(state, action["item"])
+            removed = self.remove(state, action["item"])
+            return changed_text([removed], "removed")
         elif action["type"] == "snooze":
-            self.snooze(state, action["days"], now)
+            return self.snooze(state, action["days"], now)
         else:
             raise ValueError("That action is no longer supported.")
 
     def remove(self, state, name):
         name, _ = split_quantity(name)  # "/remove 3 lemons" also works
         name = normalized(name)
-        if not find_item(state["items"], name):
+        item = find_item(state["items"], name)
+        if not item:
             raise ValueError("I couldn't find that item. Tap Remove item to choose from your list.")
         state["items"] = [x for x in state["items"] if x["name"].casefold() != name.casefold()]
         edit(state)
+        return item["name"]
 
     def add_input(self, state, text):
         # One item per line (or comma); the whole batch is validated before commit.
         # "eggs" adds just eggs. "3 lemons" adds lemons with the number 3.
         entries = re.split(r"[\n,]+", text)
+        added = []
         for entry in entries:
             name, quantity = split_quantity(entry)
             add_item(state, name, quantity)
+            added.append(item_text({"name": normalized(name), "quantity": quantity}))
+        return added
 
     async def process_one(self, now):
         with self.db.connect() as db:
@@ -293,9 +317,9 @@ class Engine:
             if awaiting == "add":
                 if not text:
                     return "Send the item you'd like to add, or tap Cancel.", cancel_menu(), None
-                self.add_input(state, text)
+                added = self.add_input(state, text)
                 state["awaiting"] = None
-                return list_text(state), review_menu(), None
+                return changed_text(added, "added") + "\n\n" + list_text(state), review_menu(), None
         if command != "__natural__":
             state["awaiting"] = None
             if command != "apply":
@@ -312,7 +336,7 @@ class Engine:
         if not state["started"]:
             return "Send /start first so I can begin your grocery check-ins.", None, None
         if command == "home":
-            return "One small step toward groceries 🌱", menu(), None
+            return "Main menu 🌱", menu(), None
         if command == "help":
             return HELP, menu(), None
         if command == "list":
@@ -359,12 +383,12 @@ class Engine:
             if not arg:
                 state["awaiting"] = "add"
                 return "What would you like to add? Send an item name, or several names separated by commas or new lines.\nWant an amount? Put the number first, like 3 lemons.", cancel_menu(), None
-            self.add_input(state, arg)
-            return list_text(state), review_menu(), None
+            added = self.add_input(state, arg)
+            return changed_text(added, "added") + "\n\n" + list_text(state), review_menu(), None
         if command in ("remove", "skip"):
             if arg:
-                self.remove(state, arg)
-                return list_text(state), review_menu(), None
+                removed = self.remove(state, arg)
+                return changed_text([removed], "removed") + "\n\n" + list_text(state), review_menu(), None
             if not state["items"]:
                 return "Your list is empty. Tap Add item to get started.", review_menu(), None
             return "Tap an item to remove it.", [
@@ -375,8 +399,8 @@ class Engine:
             index, revision = map(int, arg.split(":"))
             if revision != state["revision"] or not 0 <= index < len(state["items"]):
                 return "Your list changed. Tap Remove item again to choose from the current list.", review_menu(), None
-            self.remove(state, state["items"][index]["name"])
-            return list_text(state), review_menu(), None
+            removed = self.remove(state, state["items"][index]["name"])
+            return changed_text([removed], "removed") + "\n\n" + list_text(state), review_menu(), None
         if command == "shop":
             if not state["items"]:
                 return "Your list is empty. Add a few groceries first.", review_menu(), None
@@ -393,10 +417,11 @@ class Engine:
             pending = state["pending"]
             if not pending or pending["id"] != arg or parse(pending["expires"]) < now:
                 return "That suggestion has expired or the list changed. Send the request again.", menu(), None
+            messages = []
             for action in pending["actions"]:
-                self.apply_action(state, action, now)
+                messages.append(self.apply_action(state, action, now))
             state["pending"] = None
-            return "Done.\n\n" + list_text(state), review_menu(), None
+            return "\n".join(messages) + "\n\n" + list_text(state), review_menu(), None
         if command == "cancel":
             state["pending"] = None
             return "Cancelled. Your list and reminder timing are unchanged.", menu(), None
